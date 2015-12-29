@@ -1,7 +1,12 @@
 DHT-simDHT
 ==========
 
-in this git, i add some new feature to the "https://github.com/laomayi/simDHT"
+增加下载bt种子并获取种子内文件信息，存入mangodb
+
+
+
+
+==========
 
 Hey guy, This piece of python code is holy simple. it could find all the Magnet linker in DHT network. engjoy it!
 

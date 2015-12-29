@@ -3,8 +3,12 @@
 #!/usr/bin/env python
 import socket
 import logging
+import signal
+
 from hashlib import sha1
+import base64
 from random import randint
+
 from struct import unpack, pack
 from socket import inet_aton, inet_ntoa
 from threading import Timer, Thread
@@ -17,15 +21,52 @@ fileger = logging.getLogger("file_log")
 BOOTSTRAP_NODES = [
     ("router.bittorrent.com", 6881),
     ("dht.transmissionbt.com", 6881),
-    ("router.utorrent.com", 6881)
+    ("router.utorrent.com", 6881),
+    ("tracker.openbittorrent.com",80),
+    ("share.camoe.cn",8080)
 ] 
 
 TID_LENGTH = 4
 RE_JOIN_DHT_INTERVAL = 10
 THREAD_NUMBER = 3
 
-def initialLog():
+#全局线程对象；
+threads = []
 
+def from_hex_to_byte(hex_string):
+    byte_string = ""
+
+    transfer = "0123456789abcdef"
+    untransfer = {}
+    for i in range(16):
+        untransfer[transfer[i]] = i
+
+    for i in range(0, len(hex_string), 2):
+        byte_string += chr((untransfer[hex_string[i]] << 4) + untransfer[hex_string[i + 1]])
+
+    return byte_string
+    
+
+
+def from_byte_to_hex(byte_string):
+    transfer = "0123456789abcdef"
+    hex_string = ""
+    for s in byte_string:
+        hex_string += transfer[(ord(s) >> 4) & 15]
+        hex_string += transfer[ord(s) & 15]
+
+    return hex_string
+
+def get_btih(info_hash_record):
+    str = "0123456789ABCDEF"
+    btih = ""
+    for i in range(len(info_hash_record)):
+        btih += str[(ord(info_hash_record[i]) >> 4) & 15]
+        btih += str[ord(info_hash_record[i]) & 15]
+    return btih
+
+
+def initialLog():
     stdLogLevel = logging.DEBUG
     fileLogLevel = logging.DEBUG
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -100,11 +141,9 @@ class DHT(Thread):
     def server(self):
         self.join_DHT()
         while self.isServerWorking:
-
             try:
                 (data, address) = self.ufd.recvfrom(65536)
                 msg = bdecode(data)
-                stdger.debug("receive udp packet")
                 self.on_message(msg, address)
             except Exception:
                 pass
@@ -113,7 +152,6 @@ class DHT(Thread):
         while self.isClientWorking:
 
             for node in list(set(self.table.nodes))[:self.max_node_qsize]:
-                stdger.debug("send packet")
                 self.send_find_node((node.ip, node.port), node.nid)
 
             #is the list in python thread-safe
@@ -197,7 +235,7 @@ class DHT(Thread):
         try:
             tid = msg["t"]
             target = msg["a"]["target"]
-            self.master.log(target, address)
+            # self.master.log(target, address)
             self.play_dead(tid, address)
         except KeyError, e:
             pass
@@ -228,32 +266,52 @@ class KNode(object):
         return hash(self.nid)
 
 
-#using example
 class Master(object):
 
     def log(self, infohash, address=None):
-        stdger.debug("%s from %s:%s" % (infohash.encode("hex"), address[0], address[1]))
-        fileger.debug('%s from %s:%s' % (infohash.encode('hex').upper(),address[0],address[1]))
+
+
+        # orihash = infohash.encode('hex').upper()
+        orihash = get_btih(infohash)
+        # digest = sha1(orihash).digest().encode('hex')
+        # b32hash = base64.b32encode(digest)
+        magneturi = 'magnet:?xt=urn:btih:%s' % orihash
+        # infohash.encode('hex').upper()
+        stdger.debug("%s from %s:%s" % (magneturi, address[0], address[1]))
+        fileger.debug('%s from %s:%s' % (magneturi,address[0],address[1]))
+
+def signal_event(sig,frame):
+    try:
+        k = 0
+        for i in threads:
+            stdger.debug("stop thread %d" % k)
+            i.stop()
+            i.join()
+            k=k+1
+        exit(0)
+    except Exception, ex:
+        exit(0)
+
+def startThread():
+        for i in xrange(THREAD_NUMBER):
+            port = i+9500
+            stdger.debug("start thread %d" % port)
+            dht=DHT(Master(), "0.0.0.0", port, max_node_qsize=1000)
+            dht.start()
+            threads.append(dht)
+            sleep(1)
 
 
 if __name__ == "__main__":
     #max_node_qsize bigger, bandwith bigger, spped higher
     initialLog()
-    threads = []
-    for i in xrange(THREAD_NUMBER):
-        port = i+9500
-        stdger.debug("start thread %d" % port)
-        dht=DHT(Master(), "0.0.0.0", port, max_node_qsize=1000)
-        dht.start()
-        threads.append(dht)
-        sleep(1)
+    ##set signal handler 
+    signal.signal(signal.SIGTERM, signal_event)
+    signal.signal(signal.SIGINT, signal_event)
+    startThread()
+    while 1:
+        pass
+    
 
+ 
 
-    sleep(60*60*6)
-
-    k = 0
-    for i in threads:
-        stdger.debug("stop thread %d" % k)
-        i.stop()
-        i.join()
-        k=k+1
